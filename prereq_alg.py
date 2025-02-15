@@ -3,19 +3,14 @@ import os
 import pandas as pd
 import logging
 
-#when the text is (ECS 032B or ECS 036C);(MAT 135A and STA 035C) or (MAT 136A and STA 036C)
-#the output:
-#group,condition,course,related_group,prereq
-#1,or,ECS 032B,N/A,STS 101
-#1,or,ECS 036C,N/A,STS 101
-#2,or,MAT 135A,N/A,STS 101
-#3,or,MAT 136A,2,STS 101
-# need to make a group_condition
+
+# havent fix group_condition
 #what if the text is (ECS 032B or ECS 036C);((MAT 135A and STA 035C) or (MAT 136A and STA 036C)) or xxx
 #what if the text is (ECS 032B or ECS 036C);(MAT 135A and (xxx or xxx)) or (MAT 136A and (xxx or xxx))
 
 #test ENG 180 f, EME 115 , ARE 100A? s
 # Configure logging with force=True to avoid conflicts
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
 
 
@@ -278,27 +273,7 @@ def sanitize_course(course):
         return match.group(1)
     return None
 
-# original
-# def flatten_breakdown(breakdown_dict, prereq=""):
-    groups = breakdown_dict.get("groups", {})
-    rows = []
 
-    if not groups:  # Add the condition to handle empty groups
-        rows.append(["1", "NA", prereq, "N/A", prereq])  # Fixed to match the expected output
-
-    for g_id, courses in groups.items():
-        for course_entry in courses:
-            logging.info(f"course_entry: {course_entry}")
-            sanitized_course = sanitize_course(course_entry["course"])
-            if sanitized_course:
-                rows.append([
-                    course_entry["group"],
-                    course_entry["condition"],
-                    sanitized_course,
-                    course_entry["related_group"],
-                    prereq
-                ])
-    return rows
 
 def flatten_breakdown(breakdown_dict, prereq=""):
     """
@@ -309,7 +284,7 @@ def flatten_breakdown(breakdown_dict, prereq=""):
     rows = []
 
     if not groups:  # Handle empty groups
-        rows.append(["NA", "NA", prereq, "N/A", prereq, "N/A"])
+        rows.append(["N/A", "N/A", prereq, "N/A", prereq, "N/A"])
 
     # Pass 1: Initialize group_conditions
     group_conditions = {}
@@ -356,8 +331,8 @@ def flatten_breakdown(breakdown_dict, prereq=""):
 def save_breakdown_to_csv(breakdown_dict, csv_filename="prereqs.csv", prereq=""):
     rows = flatten_breakdown(breakdown_dict, prereq)
     if not rows:
-        logging.warning("No valid rows to save to CSV. Adding placeholder row with 'NA'.")
-        rows = [["NA", "NA", prereq, "N/A", prereq, "NA"]]  # Adjust to include group
+        logging.warning("No valid rows to save to CSV. Adding placeholder row with 'N/A'.")
+        rows = [["N/A", "N/A", prereq, "N/A", prereq, "N/A"]]  # Adjust to include group
 
     # Include group in the column headers
     df = pd.DataFrame(rows, columns=["group", "condition", "course", "related_group", "prereq", "group_condition"])
@@ -377,7 +352,7 @@ def save_breakdown_to_csv(breakdown_dict, csv_filename="prereqs.csv", prereq="")
 if __name__ == "__main__":
     course_codes = [ "ARE 100A"   
     ]
-    output_file = r"C:\\Users\\PC4\\OneDrive\\Desktop\\reg classproject\\prereq.csv"
+    output_file = r"C:\\Users\\PC4\\OneDrive\\Desktop\\reg classproject\\prereq2.csv"
     for course_code in course_codes:
         prereq_text =  "(ECN 001A C- or better or ECN 001AY C- or better or ECN 001AV C- or better); (ECN 001B C- or better or ECN 001BV C- or better); ((MAT 016A C- or better, MAT 016B C- or better, MAT 016C C- or better) or (MAT 017A C- or better, MAT 017B C- or better) or (MAT 021A C- or better, MAT 021B C- or better))."
 

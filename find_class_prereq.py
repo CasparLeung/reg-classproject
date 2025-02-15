@@ -68,12 +68,12 @@ if __name__ == "__main__":
 
     # List of courses to scrape
     
-    course_codes = [ "ARE 100A","ECS 017","ECS 032A","ECS 032B","MAT 021A","MAT 021B","MAT 021C","MAT 022A",
+    course_codes = [ "ECS 017","ECS 032A","ECS 032B","MAT 021A","MAT 021B","MAT 021C","MAT 022A",
         "STA 035A","STA 035B","STA 035C","ECS 116","ECS 117","ECS 119","STA 108",
        "STA 141A","STA 131A","MAT 170","MAT 168","MAT 167","STS 101"
-        
     ]
-    #
+    
+        
     
     # CSV file for saving results
     output_file = r"C:\\Users\\PC4\\OneDrive\\Desktop\\reg classproject\\prereq.csv"
