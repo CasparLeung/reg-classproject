@@ -4,11 +4,7 @@ import pandas as pd
 import logging
 
 
-# havent fix group_condition
-#what if the text is (ECS 032B or ECS 036C);((MAT 135A and STA 035C) or (MAT 136A and STA 036C)) or xxx
-#what if the text is (ECS 032B or ECS 036C);(MAT 135A and (xxx or xxx)) or (MAT 136A and (xxx or xxx))
 
-#test ENG 180 f, EME 115 , ARE 100A? s
 # Configure logging with force=True to avoid conflicts
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
@@ -148,60 +144,10 @@ def split_top_level_comma(expr):
             parts.append(chunk)
     return parts
 
-#original
-#def parse_comma_and_or_block(expr, group_id):
-    blocks = split_top_level_comma(expr)
-    result = []
-    increment_group = False
-    previous_group = None  
-
-    for i, blk in enumerate(blocks):
-        # Remove "or better" from the block
-        blk = re.sub(r'\s+or\s+better', '', blk, flags=re.IGNORECASE).strip()
-        print(f"Cleaned blk: {blk}")  # Debugging statement
-
-        # Split by "or" after cleaning
-        or_parts = re.split(r'\s+or\s+', blk)
-        is_or_condition = len(or_parts) > 1  #???
-
-        for j, part in enumerate(or_parts):
-            original_part = part.strip()  
-            part = original_part.strip('()')  
-
-            logging.info(f"Processing part: {original_part}")
-            if increment_group:
-                group_id += 1
-                increment_group = False
-
-            if part:
-                condition = "or" if is_or_condition else "and"  
-
-                if ',' in part:
-                    comma_parts = split_top_level_comma(part)
-                    for k, sub_part in enumerate(comma_parts):
-                        sub_part = sub_part.strip()
-                        sub_condition = "and" if k > 0 else condition
-                        result.append({
-                            "course": sub_part,
-                            "condition": sub_condition,
-                            "group": group_id,
-                            "related_group": previous_group if previous_group is not None else "N/A"
-                        })
-                else:
-                    result.append({
-                        "course": part,
-                        "condition": condition,
-                        "group": group_id,
-                        "related_group": previous_group if previous_group is not None else "N/A"
-                    })
-
-                if original_part.endswith(')'):  
-                    previous_group = group_id  
-                    increment_group = True  
-
-    return result, group_id  
+#original 
 
 def parse_comma_and_or_block(expr, group_id):
+    #change: search the part within "("and ")"
     """
     Parses a block of prerequisites containing "and", "or", and commas,
     ensuring conditions are assigned correctly based on parentheses context.
@@ -223,8 +169,7 @@ def parse_comma_and_or_block(expr, group_id):
         for j, part in enumerate(or_parts):
             original_part = part.strip()
             part = original_part.strip('()')  # Remove surrounding parentheses for clarity
-            logging.info(f"Processing part: {original_part}")
-
+            
             if increment_group:
                 group_id += 1
                 increment_group = False
@@ -350,13 +295,21 @@ def save_breakdown_to_csv(breakdown_dict, csv_filename="prereqs.csv", prereq="")
         logging.info(f"Appended data to: {csv_filename}")
 
 if __name__ == "__main__":
-    course_codes = [ "ARE 100A"   
+    course_codes = [ "ENG 180"   
     ]
     output_file = r"C:\\Users\\PC4\\OneDrive\\Desktop\\reg classproject\\prereq2.csv"
     for course_code in course_codes:
         prereq_text =  "(ECN 001A C- or better or ECN 001AY C- or better or ECN 001AV C- or better); (ECN 001B C- or better or ECN 001BV C- or better); ((MAT 016A C- or better, MAT 016B C- or better, MAT 016C C- or better) or (MAT 017A C- or better, MAT 017B C- or better) or (MAT 021A C- or better, MAT 021B C- or better))."
 
-        #        #"MAT 021C; ((MAT 022A or MAT 027A or BIS 027A, MAT 108) or MAT 067))."
+# havent fix group_condition
+#what if the text is "(ECS 032B or ECS 036C);((MAT 135A and STA 035C) or (MAT 136A and STA 036C)) or ECS 032C"
+#what if the text is (ECS 032B or ECS 036C);(MAT 135A and (xxx or xxx)) or (MAT 136A and (xxx or xxx))
+#test ENG 180 f, EME 115 , ARE 100A? 
+#test 
+#"(ENG 006 C- or better or EME 005 C- or better or ECS 030 C- or better or ECS 032A C- or better or ECS 036A C- or better); ((MAT 021D C- or better, (MAT 022B C- or better or MAT 027B C- or better))."
+#cleared
+#"(ECN 001A C- or better or ECN 001AY C- or better or ECN 001AV C- or better); (ECN 001B C- or better or ECN 001BV C- or better); ((MAT 016A C- or better, MAT 016B C- or better, MAT 016C C- or better) or (MAT 017A C- or better, MAT 017B C- or better) or (MAT 021A C- or better, MAT 021B C- or better))."
+#"MAT 021C; ((MAT 022A or MAT 027A or BIS 027A, MAT 108) or MAT 067))."
         if prereq_text:
             breakdown = break_down_prereq_text(prereq_text)
             save_breakdown_to_csv(breakdown, csv_filename=output_file, prereq=course_code)
