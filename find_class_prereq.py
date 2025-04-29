@@ -3,97 +3,95 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
-import re
+from selenium.common.exceptions import TimeoutException
 import logging
-from prereq_alg import break_down_prereq_text, flatten_breakdown, save_breakdown_to_csv
-import os
+import re
+import json
+from prereq_alg import parse_prereq_json  # your custom parser function
 
-# Configure logging with force=True to avoid conflicts
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
+# --- Chrome driver setup ---
+chrome_options = Options()
+chrome_options.add_argument("--headless")
+chrome_options.add_argument("--disable-gpu")
+chrome_options.add_argument("--window-size=1920x1080")
+chrome_options.add_argument("--no-sandbox")
+chrome_options.add_argument("--disable-dev-shm-usage")
 
+driver = webdriver.Chrome(options=chrome_options)
+
+# --- Define course codes to scrape ---
+course_codes = [
+     "STA 035B", "STA 035C"
+]
+
+# --- Scraping Function ---
 def scrape_course_prerequisites(driver, course_code):
-    """
-    Scrapes the prerequisite text from the UC Davis course catalog for a given course code.
-    """
     try:
-        # Open the UC Davis course catalog search page
         driver.get("https://catalog.ucdavis.edu/course-search/")
 
-        # Locate the search box, input the course code, and submit the search
+        # Find search box
         search_box = WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.ID, "crit-keyword"))
         )
         search_box.clear()
         search_box.send_keys(course_code)
-        
-        # Click the search button
-        search_button = driver.find_element(By.ID, "search-button")
-        search_button.click()
+        driver.find_element(By.ID, "search-button").click()
 
-        # Wait for the search results to load and click the first result link
+        # Click first result
         first_result = WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.CLASS_NAME, "result__link"))
         )
         first_result.click()
 
-        # Check if the prerequisite element exists and extract its content
+        # Find prerequisites
         try:
-            prerequisite_text_element = WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "p.text.courseblockdetail.detail-prerequisite"))
+            prereq_element = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located(
+                    (By.CSS_SELECTOR, "p.text.courseblockdetail.detail-prerequisite")
+                )
             )
-            prerequisite_text_content = re.sub(r'^Prerequisite\(s\):\s*', '', prerequisite_text_element.text)
-            print(f"Prerequisites for {course_code}: {prerequisite_text_content}")
-            return prerequisite_text_content
-
+            prereq_text = prereq_element.text.strip()
+            prereq_text = re.sub(r'^Prerequisite\(s\):\s*', '', prereq_text)
+            print(f"Prerequisites for {course_code}: {prereq_text}")
+            return prereq_text
         except TimeoutException:
             print(f"No prerequisites found for {course_code}")
-            return None
+            return ""
 
     except Exception as e:
-        logging.error(f"Error occurred while processing {course_code}: {e}")
-        return None
+        logging.error(f"Error while processing {course_code}: {e}")
+        return ""
 
-if __name__ == "__main__":
-    # Set Chrome options for headless mode
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")  # Enables headless mode
-    chrome_options.add_argument("--disable-gpu")  # Disables GPU hardware acceleration
-    chrome_options.add_argument("--window-size=1920x1080")  # Set window size for headless mode
-    chrome_options.add_argument("--no-sandbox")  # Required for some environments
-    chrome_options.add_argument("--disable-dev-shm-usage")  # Prevents limited resource issues
+# --- Scrape prerequisites for each course ---
+prereq_texts = []
+for code in course_codes:
+    prereq = scrape_course_prerequisites(driver, code)
+    prereq_texts.append(prereq)
 
-    # Initialize the Chrome WebDriver with headless mode
-    driver = webdriver.Chrome(options=chrome_options)
+# --- Parse using prereq_alg ---
+output = {}
 
-    # List of courses to scrape
-    
-    course_codes = [ "ECS 017","ECS 032A","ECS 032B","MAT 021A","MAT 021B","MAT 021C","MAT 022A",
-        "STA 035A","STA 035B","STA 035C","ECS 116","ECS 117","ECS 119","STA 108",
-       "STA 141A","STA 131A","MAT 170","MAT 168","MAT 167","STS 101"
-    ]
-    
-        
-    
-    # CSV file for saving results
-    output_file = r"C:\\Users\\PC4\\OneDrive\\Desktop\\reg classproject\\prereq.csv"
+for code, text in zip(course_codes, prereq_texts):
+    print(f"Processing {code} with text: '{text}'")
 
-    # Clear the CSV file before writing new data (optional)
-    if os.path.exists(output_file):
-        os.remove(output_file)
+    if not text.strip():
+        print(f"Skipping {code} because no prereq text found.")
+        output[code] = {}
+        continue
 
-    # Loop through each course, scrape prerequisites, and save them to CSV
-    for course_code in course_codes:
-        prereq_text = scrape_course_prerequisites(driver, course_code)
-        if prereq_text:
-            breakdown = break_down_prereq_text(prereq_text)
-            save_breakdown_to_csv(breakdown, csv_filename=output_file, prereq=course_code)
-            print(f"Prerequisites for {course_code} have been saved successfully.")
-        else:
-            prereq_text = ""
-            breakdown = break_down_prereq_text(prereq_text)
-            save_breakdown_to_csv(breakdown, csv_filename=output_file, prereq=course_code)
+    try:
+        parsed_json = parse_prereq_json([code], [text])
+        output.update(parsed_json)
+    except Exception as e:
+        logging.error(f"Failed to parse {code}: {e}")
+        output[code] = {}
 
-    # Close the browser after all courses have been processed
-    driver.quit()
-    print(f"All course prerequisites have been saved to {output_file}.")
+# --- Save to JSON ---
+output_file = r"C:\\Users\\PC4\\OneDrive\\Desktop\\reg classproject\\parsed_prereqs.json"
+with open(output_file, "w") as f:
+    json.dump(output, f, indent=2)
+
+print(f"\u2705 Prerequisite structure saved to {output_file}")
+
+# --- Cleanup ---
+driver.quit()

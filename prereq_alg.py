@@ -1,325 +1,176 @@
 import re
-import os
-import pandas as pd
-import logging
+import json
+from itertools import count
 
+# --- Tokenizer ---
+def tokenize(expr):
+    expr = re.sub(r'\(can be concurrent\)', '', expr, flags=re.IGNORECASE)
+    expr = re.sub(r'\{.*?\}', '', expr)
 
+    expr = re.sub(r'\b(C-|B|A|D|F)\s*or\s*better\b', '', expr, flags=re.IGNORECASE)
+    expr = re.sub(r'\b(C-|B|A|D|F)\b', '', expr, flags=re.IGNORECASE)
+    expr = re.sub(r'\bor better\b', '', expr, flags=re.IGNORECASE)
 
-# Configure logging with force=True to avoid conflicts
+    expr = re.sub(r'\b([A-Z]{2,4})\s+(\d{3}[A-Z]{0,2})\b', r'\1_\2', expr)
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
+    expr = re.sub(r'([(),;.])', r' \1 ', expr)
 
+    tokens = expr.split()
+    return [t.replace('_', ' ') for t in tokens if t.strip() and t != '.']
 
-def break_down_prereq_text(text):
-    segments = split_top_level_semicolons(text)
-    groups = {}
-    group_id = 1
+# --- Parser ---
+def parse_expr(tokens, index=0):
+    elements = []
+    current = []
+    current_op = None
+    groups = []
+    depth = 0
 
-    for seg in segments:
-        seg = seg.strip().rstrip('.')  # Remove trailing period
-        if not seg:
-            continue
+    while index < len(tokens):
+        token = tokens[index]
 
-        seg = remove_all_balanced_parentheses(seg)
-
-        if is_complex_parenthetical(seg):
-            expr = remove_outer_parens(seg)
-            subgroups = split_by_top_level_or(expr)
-
-            for subgroup in subgroups:
-                sg, group_id = parse_comma_and_or_block(remove_outer_parens(subgroup.strip()), group_id)
-                groups[group_id] = sg
-                group_id += 1
+        if token == '(':
+            depth += 1
+            index, sub_expr = parse_expr(tokens, index + 1)
+            current.append(sub_expr)
+        elif token == ')':
+            depth -= 1
+            break
+        elif token.lower() == 'or':
+            current_op = 'or'
+        elif token == ';':
+            if current:
+                if current_op == 'or' and len(current) > 1:
+                    groups.append({'or': current})
+                else:
+                    groups.append(current[0])
+                current = []
+            current_op = None
+        elif token == ',':
+            if current_op == 'or' and len(current) > 1:
+                groups.append({'or': current})
+                current = []
+            current_op = 'and'
         else:
-            sg, group_id = parse_comma_and_or_block(seg, group_id)
-            groups[group_id] = sg
-            group_id += 1
+            current.append(token)
 
-    return {"groups": groups}
+        index += 1
 
-def split_top_level_semicolons(text):
-    return [p.strip() for p in text.split(';') if p.strip()]
-
-def is_complex_parenthetical(seg):
-    return '(' in seg and ')' in seg and ' or ' in seg.lower()
-
-def remove_all_balanced_parentheses(expr):
-    s = expr.strip()
-    while True:
-        new_s = remove_one_balanced_layer(s)
-        if new_s == s:
-            return s
-        s = new_s
-
-def remove_one_balanced_layer(s):
-    s = s.strip()
-    if not (s.startswith('(') and s.endswith(')')):
-        return s
-    inside = s[1:-1].strip()
-    if is_balanced(inside):
-        return inside
-    return s
-
-def is_balanced(t):
-    level = 0
-    for c in t:
-        if c == '(':
-            level += 1
-        elif c == ')':
-            level -= 1
-            if level < 0:
-                return False
-    return (level == 0)
-
-def remove_outer_parens(expr):
-    s = expr.strip()
-    while s.startswith('(') and s.endswith(')') and parens_match_entire(s):
-        s = s[1:-1].strip()
-    return s
-
-def parens_match_entire(s):
-    level = 0
-    for i, c in enumerate(s):
-        if c == '(':
-            level += 1
-        elif c == ')':
-            level -= 1
-            if level == 0 and i < len(s) - 1:
-                return False
-    return (level == 0)
-
-def split_by_top_level_or(expr):
-    parts = []
-    level = 0
-    start = 0
-    i = 0
-    expr_len = len(expr)
-    while i < expr_len:
-        c = expr[i]
-        if c == '(':
-            level += 1
-        elif c == ')':
-            level -= 1
-
-        if level == 0 and expr[i:i+3].lower() == ' or' and (i == 0 or expr[i-1].isspace()):
-            part = expr[start:i].strip()
-            if part:
-                parts.append(part)
-            i += 3
-            while i < expr_len and expr[i].isspace():
-                i += 1
-            start = i
+    if current:
+        if current_op == 'or' and len(current) > 1:
+            groups.append({'or': current})
+        elif current_op == 'and' and len(current) > 1:
+            groups.append({'and': current})
         else:
-            i += 1
-    if start < expr_len:
-        part = expr[start:].strip()
-        if part:
-            parts.append(part)
-    return parts
+            groups.extend(current)
 
-def split_top_level_comma(expr):
-    parts = []
-    level = 0
-    start = 0
-    i = 0
-    while i < len(expr):
-        c = expr[i]
-        if c == '(':
-            level += 1
-        elif c == ')':
-            level -= 1
-        elif c == ',' and level == 0:
-            chunk = expr[start:i].strip()
-            if chunk:
-                parts.append(chunk)
-            i += 1
-            while i < len(expr) and expr[i].isspace():
-                i += 1
-            start = i
-            continue
-        i += 1
-    if start < len(expr):
-        chunk = expr[start:].strip()
-        if chunk:
-            parts.append(chunk)
-    return parts
-
-#original 
-
-def parse_comma_and_or_block(expr, group_id):
-    #change: search the part within "("and ")"
-    """
-    Parses a block of prerequisites containing "and", "or", and commas,
-    ensuring conditions are assigned correctly based on parentheses context.
-    """
-    blocks = split_top_level_comma(expr)  # Split the expression by top-level commas
-    result = []
-    increment_group = False
-    previous_group = None
-
-    for i, blk in enumerate(blocks):
-        # Remove "or better" from the block
-        blk = re.sub(r'\s+or\s+better', '', blk, flags=re.IGNORECASE).strip()
-        logging.info(f"Processing block: {blk}")
-
-        # Split by "or" after cleaning
-        or_parts = re.split(r'\s+or\s+', blk)
-        is_or_condition = len(or_parts) > 1  # True if the block contains "or"
-
-        for j, part in enumerate(or_parts):
-            original_part = part.strip()
-            part = original_part.strip('()')  # Remove surrounding parentheses for clarity
-            
-            if increment_group:
-                group_id += 1
-                increment_group = False
-
-            if part:
-                condition = "or" if is_or_condition else "and"  
-
-                if ',' in part:  # Handle comma-separated lists (implies "and")
-                    comma_parts = split_top_level_comma(part)
-                    for sub_part in comma_parts:
-                        sub_part = sub_part.strip()
-                        sub_condition = (
-                            "and" if original_part.startswith('(') and original_part.endswith(')') else 
-                            ("and" if sub_part == comma_parts[-1] else "or")
-                            )
-                        result.append({
-                            "course": sub_part,
-                            "condition": sub_condition,
-                            "group": group_id,
-                            "related_group": previous_group if previous_group is not None else "N/A",
-                            "group_condition": condition if previous_group else "N/A"
-                        })
-                else:  # Single course or nested part without commas
-                    result.append({
-                        "course": part,
-                        "condition": condition,
-                        "group": group_id,
-                        "related_group": previous_group if previous_group is not None else "N/A",
-                        "group_condition": condition if previous_group else "N/A"
-                    })
-
-                # If this part ends with a parenthesis, it might indicate a nested group
-                if original_part.endswith(')'):
-                    previous_group = group_id
-                    increment_group = True
-
-    return result, group_id
-
-
-def sanitize_course(course):
-    # Adjusted regex to stop discarding text after the course code
-    match = re.search(r'\b([A-Z]{3}\s\d{3}[A-Z]{0,2})\b', course)
-    #original re.match(r'^([A-Z]{3}\s\d{3}[A-Z]{0,2})', course)
-    if match:
-        # Return the full course with the description intact
-        return match.group(1)
-    return None
-
-
-
-def flatten_breakdown(breakdown_dict, prereq=""):
-    """
-    Flattens the parsed prerequisite breakdown into rows suitable for saving to a CSV file.
-    Ensures correct group_condition propagation for nested groups.
-    """
-    groups = breakdown_dict.get("groups", {})
-    rows = []
-
-    if not groups:  # Handle empty groups
-        rows.append(["N/A", "N/A", prereq, "N/A", prereq, "N/A"])
-
-    # Pass 1: Initialize group_conditions
-    group_conditions = {}
-    for g_id, courses in groups.items():
-        if all(course["related_group"] == "N/A" for course in courses):
-            # Standalone group: No inherited group_condition
-            group_conditions[g_id] = "N/A"
-        else:
-            # Use the initial group_condition from parsing
-            group_conditions[g_id] = courses[0].get("group_condition", "N/A")
-
-    # Debug: Output initial group conditions
-    print(f"Initial group_conditions: {group_conditions}")
-
-    # Pass 2: Propagate group_conditions for nested groups
-    for g_id, courses in groups.items():
-        for course_entry in courses:
-            if course_entry["related_group"] != "N/A":
-                parent_group = int(course_entry["related_group"])
-                if parent_group in group_conditions:
-                    # Inherit group_condition from the parent group
-                    group_conditions[g_id] = group_conditions[parent_group]
-
-    # Debug: Output propagated group conditions
-    print(f"Propagated group_conditions: {group_conditions}")
-
-    # Pass 3: Generate rows for output
-    for g_id, courses in groups.items():
-        for course_entry in courses:
-            group_condition = group_conditions.get(g_id, "N/A")
-            sanitized_course = sanitize_course(course_entry["course"])
-            if sanitized_course:
-                rows.append([
-                    course_entry["group"],         # Column 1: group
-                    course_entry["condition"],     # Column 2: condition
-                    sanitized_course,              # Column 3: course
-                    course_entry["related_group"], # Column 4: related_group
-                    prereq,                        # Column 5: prereq
-                    group_condition                # Column 6: group_condition
-                ])
-    return rows
-
-
-def save_breakdown_to_csv(breakdown_dict, csv_filename="prereqs.csv", prereq=""):
-    rows = flatten_breakdown(breakdown_dict, prereq)
-    if not rows:
-        logging.warning("No valid rows to save to CSV. Adding placeholder row with 'N/A'.")
-        rows = [["N/A", "N/A", prereq, "N/A", prereq, "N/A"]]  # Adjust to include group
-
-    # Include group in the column headers
-    df = pd.DataFrame(rows, columns=["group", "condition", "course", "related_group", "prereq", "group_condition"])
-
-    directory = os.path.dirname(os.path.abspath(csv_filename))
-    os.makedirs(directory, exist_ok=True)
-
-    # Overwrite or create the file with headers always
-    if not os.path.exists(csv_filename):
-        df.to_csv(csv_filename, mode='w', header=True, index=False)
-        logging.info(f"File created with headers: {csv_filename}")
+    if len(groups) == 1:
+        return index, groups[0]
     else:
-        # Append without headers if the file exists
-        df.to_csv(csv_filename, mode='a', header=False, index=False)
-        logging.info(f"Appended data to: {csv_filename}")
+        return index, {'and': groups}
+
+# --- Top-level parser ---
+def parse(tokens):
+    if not tokens:
+        return 0, {}  # Empty input protection
+
+    groups = []
+    current = []
+    depth = 0
+
+    for token in tokens:
+        if token == '(':
+            depth += 1
+        elif token == ')':
+            depth -= 1
+
+        if token == ';' and depth == 0:
+            if current:
+                groups.append(current)
+                current = []
+        else:
+            current.append(token)
+
+    if current:
+        groups.append(current)
+
+    parsed_groups = []
+    for group in groups:
+        _, parsed = parse_expr(group)
+        parsed_groups.append(parsed)
+
+    if not parsed_groups:
+        return 0, {}  # More protection
+
+    return 0, {'and': parsed_groups} if len(parsed_groups) > 1 else parsed_groups[0]
+
+# --- Label Generator ---
+def part_label_gen():
+    counter = count(1)
+    while True:
+        yield f"Part {next(counter)}"
+
+# --- JSON Builder ---
+def build_json(tree, label_gen):
+    if isinstance(tree, list):
+        return {
+            "type": "and",
+            "parts": [build_json(i, label_gen) for i in tree]
+        }
+    if isinstance(tree, str):
+        return {
+            "label": next(label_gen),
+            "type": "single",
+            "course": tree
+        }
+    if isinstance(tree, dict):
+        if not tree:  # Empty dict case
+            return {
+                "label": next(label_gen),
+                "type": "none",
+                "note": "No prerequisites"
+            }
+        op, items = next(iter(tree.items()))
+        if op == 'or' and all(isinstance(i, str) for i in items):
+            return {
+                "label": next(label_gen),
+                "type": "or",
+                "courses": items
+            }
+        return {
+            "type": op,
+            "parts": [build_json(i, label_gen) for i in items]
+        }
+
+# --- Integration method ---
+def parse_prereq_json(course_codes, prereq_texts):
+    all_output = {}
+    for course_code, expr in zip(course_codes, prereq_texts):
+        tokens = tokenize(expr)
+        if not tokens:
+            all_output[course_code] = {
+                "label": "Part 1",
+                "type": "none",
+                "note": "No prerequisites"
+            }
+            continue
+        _, parsed = parse(tokens)
+        label_gen = part_label_gen()
+        json_data = build_json(parsed, label_gen)
+        all_output[course_code] = json_data
+    return all_output
+
+# --- Example to test ---
+def main():
+    course_codes = ["ECS 017"]
+    prereq_texts = [""]
+
+    output = parse_prereq_json(course_codes, prereq_texts)
+
+    with open("parsed_prereqs.json", "w") as f:
+        json.dump(output, f, indent=2)
+
+    print("\u2705 Prerequisite structure saved to parsed_prereqs.json")
 
 if __name__ == "__main__":
-    course_codes = [ "ENG 180"   
-    ]
-    output_file = r"C:\\Users\\PC4\\OneDrive\\Desktop\\reg classproject\\prereq2.csv"
-    for course_code in course_codes:
-        prereq_text =  "(ECN 001A C- or better or ECN 001AY C- or better or ECN 001AV C- or better); (ECN 001B C- or better or ECN 001BV C- or better); ((MAT 016A C- or better, MAT 016B C- or better, MAT 016C C- or better) or (MAT 017A C- or better, MAT 017B C- or better) or (MAT 021A C- or better, MAT 021B C- or better))."
-
-# havent fix group_condition
-#what if the text is "(ECS 032B or ECS 036C);((MAT 135A and STA 035C) or (MAT 136A and STA 036C)) or ECS 032C"
-#what if the text is (ECS 032B or ECS 036C);(MAT 135A and (xxx or xxx)) or (MAT 136A and (xxx or xxx))
-#test ENG 180 f, EME 115 , ARE 100A? 
-#test 
-#"(ENG 006 C- or better or EME 005 C- or better or ECS 030 C- or better or ECS 032A C- or better or ECS 036A C- or better); ((MAT 021D C- or better, (MAT 022B C- or better or MAT 027B C- or better))."
-#cleared
-#"(ECN 001A C- or better or ECN 001AY C- or better or ECN 001AV C- or better); (ECN 001B C- or better or ECN 001BV C- or better); ((MAT 016A C- or better, MAT 016B C- or better, MAT 016C C- or better) or (MAT 017A C- or better, MAT 017B C- or better) or (MAT 021A C- or better, MAT 021B C- or better))."
-#"MAT 021C; ((MAT 022A or MAT 027A or BIS 027A, MAT 108) or MAT 067))."
-        if prereq_text:
-            breakdown = break_down_prereq_text(prereq_text)
-            save_breakdown_to_csv(breakdown, csv_filename=output_file, prereq=course_code)
-            print(f"Prerequisites for {course_code} have been saved successfully.")
-        else:
-            prereq_text = ""
-            breakdown = break_down_prereq_text(prereq_text)
-            save_breakdown_to_csv(breakdown, csv_filename=output_file, prereq=course_code)
-
-    # Close the browser after all courses have been processed
-
-    print(f"All course prerequisites have been saved to {output_file}.")
-
+    main()
