@@ -1,118 +1,243 @@
-import csv
 import os
-import time
-import undetected_chromedriver as uc  # Prevents detection
+import csv
+from multiprocessing import freeze_support
+from concurrent.futures import ThreadPoolExecutor
+from collections import defaultdict
+from datetime import date
+
+import undetected_chromedriver as uc
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import Select
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 
-# 🚀 Optimized Chrome Options
-chrome_options = webdriver.ChromeOptions()
-chrome_options.add_argument("--headless")  # Run in headless mode
-chrome_options.add_argument("--disable-gpu")
-chrome_options.add_argument("--disable-extensions")
-chrome_options.add_argument("--blink-settings=imagesEnabled=false")  # Disable images
-chrome_options.add_argument("--disable-dev-shm-usage")  # Optimize memory use
-chrome_options.add_argument("--no-sandbox")
-chrome_options.add_argument("--disable-background-networking")  # Speed boost
-chrome_options.add_argument("--disable-sync")
 
-# Initialize undetected ChromeDriver
-driver = uc.Chrome(options=chrome_options)
+# ───────────────────────── Chrome Setup ─────────────────────────
 
-# 📂 Setup CSV file
-save_directory = r"C:/Users/PC4/OneDrive/Desktop/reg classproject"
-os.makedirs(save_directory, exist_ok=True)
-csv_filename = os.path.join(save_directory, f"all_courses_{datetime.now().strftime('%Y-%m-%d_%H-%M')}.csv")
+def make_chrome_options():
+    opts = webdriver.ChromeOptions()
+    opts.add_argument("--headless")
+    opts.add_argument("--disable-gpu")
+    opts.add_argument("--disable-extensions")
+    opts.add_argument("--blink-settings=imagesEnabled=false")
+    opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-background-networking")
+    opts.add_argument("--disable-sync")
+    return opts
 
-# 🎯 Subject List
-option_values = ["AAS", "AMR", "AGC", "ARE", "AGE", "AED", "ASE", "AGR", "AMS", "ANB", "ABI", "ABG", 
-    "ANG", "ANS", "ANT", "ABS", "ABT", "ARB", "AHI", "ART", "ASA", "AST", "ATM", "AVS", 
-    "BCB", "BMB", "BIS", "BIO", "BPT", "BPH", "BST", "BIT", "DEB", "BAX", "CAN", "CDB", 
-    "CEL", "CHE", "CHI", "CHN", "CTS", "CDM", "CLA", "CLH", "CGS", "LTS", "CLR", "CMN", 
-    "CRD", "COM", "CNE", "CNS", "CRI", "CRO", "CSM", "CST", "DAN", "DSC", "DES", "DRA", 
-    "EPS", "EAS", "ECL", "ECN", "EJS", "EDU", "EAP", "EDO", "EGG", "ENG", "EAE", "EAD", 
-    "EAL", "EBS", "BIM", "ECH", "ECM", "ECI", "ECS", "EEC", "EMS", "EME", "MAE", "ENL", 
-    "ENT", "ENH", "EVH", "ENP", "ENV", "ERS", "ESMC", "ESME", "ESM", "ESP", "EST", "ETX", 
-    "EPI", "EVE", "EXB", "EXS", "FPS", "FMS", "LFA", "FAH", "FST", "FSM", "FOR", "FRE", 
-    "FRS", "FSE", "GSW", "GGG", "GEO", "GEL", "GER", "GDB", "GLO", "GRD", "GRK", "MHI", "HEB",
-      "HND", "HIN", "HIS", "HPS", "HNR", "HRT", "HDE", "HMR", "HUM", "HUN", "HYD", "IMM", "IPM",
-        "IST", "IAD", "ICL", "IRE", "ITA", "JPN", "JST", "LED", "LDA", "LAT", "LAH", "LAW", "LIN", 
-        "MGT", "MGV", "MGB", "MGP", "MPH", "MCN", "MPS", "MAT", "ANE", "BCM", "CHA", "CPS", "CMH", 
-        "DER", "EPP", "FAP", "HPH", "IMD", "CAR", "NCM", "EMR", "ENM", "GAS", "GMD", "HON", "IDI", 
-        "NEP", "PUL", "MMI", "PHA", "MDS", "NEU", "NSU", "OBG", "OEH", "OPT", "OSU", "OTO", "PMD", "PED", 
-        "PMR", "PSU", "PSY", "SPH", "RON", "RDI", "RNU", "RAL", "SUR", "URO", "MDD", "MDI", "MST", "MIC", 
-        "MMG", "MIB", "MSA", "MSC", "MCB", "MCP", "MUS", "NAS", "NAC", "NEM", "NPB", "NSC", "NRS", "NUT", "NGG",
-          "NUB", "PFS", "PER", "PTX", "PHI", "PHE", "PAS", "PHY", "PGG", "PLB", "PBI", "PLP", "PPP", "PLS", "POL", 
-          "POM", "PBG", "POR", "ACC", "PSC", "PUN", "RMT", "RST", "RUS", "VET", "STS", "SAS", "STP", "STH", "SOC", 
-          "SSC", "SPA", "STA", "REL", "SAF", "SSB", "TCS", "TAE", "TXC", "TTP", "TRK", "UWP", "URD", "VCR", "DVM", "VMD", 
-          "VEN", "APC", "VME", "VMB", "PMI", "PHR", "MPM", "VSR", "WFB", "WFC", "WMS", "WLD"]  # Use a subset for testing
 
-# Function to scrape a subject
-def scrape_subject(value):
+def create_driver(driver_path: str):
+    return uc.Chrome(
+        driver_executable_path=driver_path,
+        options=make_chrome_options(),
+        use_subprocess=False
+    )
+
+
+# ───────────────────────── Scraping Logic ─────────────────────────
+
+def scrape_subject(subject_code: str, driver_path: str):
+    driver = create_driver(driver_path)
+    data = []
+
     try:
-        # Open website (only once)
-        if driver.current_url != 'https://registrar-apps.ucdavis.edu/courses/search/index.cfm':
-            driver.get('https://registrar-apps.ucdavis.edu/courses/search/index.cfm')
+        driver.get("https://registrar-apps.ucdavis.edu/courses/search/index.cfm")
 
-        # Select Term
-        term_dropdown = driver.find_element(By.NAME, "termCode")
-        Select(term_dropdown).select_by_value("202503")
+        Select(WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.NAME, "termCode"))
+        )).select_by_value("202603")
 
-        # Select Subject
-        subject_dropdown = driver.find_element(By.NAME, "subject")
-        Select(subject_dropdown).select_by_value(value)
+        Select(driver.find_element(By.NAME, "subject")) \
+            .select_by_value(subject_code)
 
-        # Click Search Button
-        search_button = driver.find_element(By.NAME, "search")
-        driver.execute_script("arguments[0].click();", search_button)
+        driver.execute_script(
+            "arguments[0].click();",
+            driver.find_element(By.NAME, "search")
+        )
 
-        # Wait for results
-        WebDriverWait(driver, 10).until(
+        WebDriverWait(driver, 20).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, "table#mc_win tbody"))
         )
 
-        # Extract Rows
         rows = driver.find_elements(By.CSS_SELECTOR, "tr[bgcolor]")
-        results = []
 
         for row in rows:
             try:
-                crn_td = row.find_element(By.CSS_SELECTOR, "td:nth-child(1)")
-                crn = crn_td.find_element(By.CSS_SELECTOR, "strong").text
-                time_days = crn_td.find_element(By.CSS_SELECTOR, "em").text if crn_td.find_elements(By.CSS_SELECTOR, "em") else "N/A"
+                crn = row.find_element(By.CSS_SELECTOR, "td:nth-child(1) strong").text.strip()
+                if not crn.isdigit():
+                    continue
 
-                course = row.find_element(By.CSS_SELECTOR, "td:nth-child(2)").text.split("\n")[0]
-                section = row.find_element(By.CSS_SELECTOR, "td:nth-child(3)").text.split("\n")[0]
-                open_reserved_waitlist = row.find_element(By.CSS_SELECTOR, "td:nth-child(3) em").text if row.find_elements(By.CSS_SELECTOR, "td:nth-child(3) em") else "N/A"
+                time_days = (
+                    row.find_elements(By.CSS_SELECTOR, "td:nth-child(1) em") and
+                    row.find_element(By.CSS_SELECTOR, "td:nth-child(1) em").text
+                    or "N/A"
+                )
 
-                instructor_td = row.find_element(By.CSS_SELECTOR, "td:nth-child(5)")
-                instructor = instructor_td.text.split("\n")[0] if instructor_td.text.strip() else "TBA"
+                course = row.find_element(By.CSS_SELECTOR, "td:nth-child(2)") \
+                    .text.split("\n")[0]
 
-                results.append([value, crn, time_days, course, section, open_reserved_waitlist, instructor])
-            except:
+                section = row.find_element(By.CSS_SELECTOR, "td:nth-child(3)") \
+                    .text.split("\n")[0]
+
+                open_wait = (
+                    row.find_elements(By.CSS_SELECTOR, "td:nth-child(3) em") and
+                    row.find_element(By.CSS_SELECTOR, "td:nth-child(3) em").text
+                    or "N/A"
+                )
+
+                instructor = (
+                    row.find_element(By.CSS_SELECTOR, "td:nth-child(5)")
+                       .text.split("\n")[0]
+                       or "TBA"
+                )
+
+                data.append([
+                    subject_code,
+                    crn,
+                    time_days,
+                    course,
+                    section,
+                    open_wait,
+                    instructor
+                ])
+
+            except Exception:
                 continue
 
-        return results
+        return data
 
-    except Exception as e:
-        print(f"Error processing subject {value}: {e}")
-        return []
+    finally:
+        driver.quit()
 
-# Run subjects in parallel (adjust max_workers based on CPU)
-with ThreadPoolExecutor(max_workers=5) as executor:
-    all_results = executor.map(scrape_subject, option_values)
 
-# Save to CSV
-with open(csv_filename, 'w', newline='', encoding='utf-8') as file:
-    writer = csv.writer(file)
-    writer.writerow(["Subject", "CRN", "Time/Days", "Course", "Section", "Open/Reserved/Waitlist", "Instructor"])
-    for result in all_results:
-        writer.writerows(result)
+# ───────────────────────── Helpers ─────────────────────────
 
-print(f"✅ Data successfully saved to {csv_filename}")
-driver.quit()
+def extract_open_count(text: str) -> int:
+    try:
+        for part in text.split("/"):
+            if "Open" in part:
+                return int(part.split(":")[1].strip())
+    except Exception:
+        pass
+    return 0
+
+
+def deduplicate_rows(rows):
+    seen = set()
+    deduped = []
+
+    for row in rows:
+        key = (row[1], row[3])  # (CRN, Course)
+        if key not in seen:
+            seen.add(key)
+            deduped.append(row)
+
+    return deduped
+
+
+def aggregate_open_by_course(rows):
+    course_open = defaultdict(int)
+    for row in rows:
+        course_open[row[3]] += extract_open_count(row[5])
+    return course_open
+
+
+def update_course_open_tracker(course_open, tracker_file):
+    today = date.today().isoformat()
+    existing = {}
+
+    if os.path.exists(tracker_file):
+        with open(tracker_file, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for r in reader:
+                existing[r["Course"]] = r
+
+    updated = {}
+
+    for course, total_open in course_open.items():
+        if course not in existing:
+            updated[course] = {
+                "Course": course,
+                "First Seen": today,
+                "Total Open": total_open,
+                "Days to Zero": 0 if total_open == 0 else ""
+            }
+        else:
+            record = existing[course]
+            record["Total Open"] = total_open
+
+            if record["Days to Zero"] == "" and total_open == 0:
+                first_seen = date.fromisoformat(record["First Seen"])
+                record["Days to Zero"] = (date.today() - first_seen).days
+
+            updated[course] = record
+
+    with open(tracker_file, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=["Course", "First Seen", "Total Open", "Days to Zero"]
+        )
+        writer.writeheader()
+        writer.writerows(updated.values())
+
+
+# ───────────────────────── Main ─────────────────────────
+
+def main():
+    freeze_support()
+
+    # unpack chromedriver once
+    tmp = uc.Chrome(options=make_chrome_options(), use_subprocess=False)
+    tmp.quit()
+
+    driver_path = os.path.join(
+        os.getenv("APPDATA"),
+        "undetected_chromedriver",
+        "undetected_chromedriver.exe"
+    )
+
+    save_dir = r"C:/Users/PC4/OneDrive/Desktop/reg classproject"
+    os.makedirs(save_dir, exist_ok=True)
+
+    courses_csv = os.path.join(save_dir, "all_courses.csv")
+    tracker_csv = os.path.join(save_dir, "course_open_tracker.csv")
+
+    subjects = ["ECL"]  # extend as needed
+
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        batches = pool.map(
+            lambda s: scrape_subject(s, driver_path),
+            subjects
+        )
+
+    all_rows = []
+    for batch in batches:
+        if batch:
+            all_rows.extend(batch)
+
+    all_rows = deduplicate_rows(all_rows)
+
+    # overwrite snapshot CSV
+    with open(courses_csv, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "Subject",
+            "CRN",
+            "Time/Days",
+            "Course",
+            "Section",
+            "Open/Reserved/Waitlist",
+            "Instructor"
+        ])
+        writer.writerows(all_rows)
+
+    course_open = aggregate_open_by_course(all_rows)
+    update_course_open_tracker(course_open, tracker_csv)
+
+    print(f"✅ Snapshot saved to {courses_csv}")
+    print(f"📊 Course OPEN tracker updated: {tracker_csv}")
+
+
+if __name__ == "__main__":
+    main()
